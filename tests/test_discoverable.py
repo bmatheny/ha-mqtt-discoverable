@@ -15,6 +15,7 @@
 #
 import asyncio
 import logging
+import time
 from concurrent.futures import ThreadPoolExecutor
 from threading import Event
 from unittest.mock import MagicMock
@@ -28,13 +29,13 @@ from paho.mqtt.client import (
     MQTTv5,
     SubscribeOptions,
 )
+from paho.mqtt.enums import CallbackAPIVersion
 from pytest_mock import MockerFixture
 
 from ha_mqtt_discoverable import DeviceInfo, Discoverable, EntityInfo, Settings
 
-
 @pytest.fixture
-def discoverable() -> Discoverable[EntityInfo]:
+def discoverable(mosquitto) -> Discoverable[EntityInfo]:
     mqtt_settings = Settings.MQTT(host="localhost")
     sensor_info = EntityInfo(name="test", component="binary_sensor")
     settings = Settings(mqtt=mqtt_settings, entity=sensor_info)
@@ -42,7 +43,7 @@ def discoverable() -> Discoverable[EntityInfo]:
 
 
 @pytest.fixture
-def discoverable_availability() -> Discoverable[EntityInfo]:
+def discoverable_availability(mosquitto) -> Discoverable[EntityInfo]:
     """Return an instance of Discoverable configured with `manual_availability`"""
     mqtt_settings = Settings.MQTT(host="localhost")
     sensor_info = EntityInfo(name="test", component="binary_sensor")
@@ -50,7 +51,7 @@ def discoverable_availability() -> Discoverable[EntityInfo]:
     return Discoverable[EntityInfo](settings)
 
 
-def test_required_config():
+def test_required_config(mosquitto):
     mqtt_settings = Settings.MQTT(host="localhost")
     sensor_info = EntityInfo(name="test", component="binary_sensor")
     settings = Settings(mqtt=mqtt_settings, entity=sensor_info)
@@ -65,7 +66,7 @@ def test_missing_config():
         Settings(entity=sensor_info)  # type: ignore
 
 
-def test_custom_on_connect():
+def test_custom_on_connect(mosquitto):
     """Test that the custom callback function is invoked when we connect to MQTT"""
     mqtt_settings = Settings.MQTT(host="localhost")
     sensor_info = EntityInfo(name="test", component="binary_sensor")
@@ -98,7 +99,7 @@ def test_custom_on_connect_must_be_called(mocker: MockerFixture):
     mock_instance.assert_not_called()
 
 
-def test_mqtt_topics():
+def test_mqtt_topics(mosquitto):
     mqtt_settings = Settings.MQTT(host="localhost")
     sensor_info = EntityInfo(name="test", component="binary_sensor")
     settings = Settings(mqtt=mqtt_settings, entity=sensor_info)
@@ -109,7 +110,7 @@ def test_mqtt_topics():
     assert d.attributes_topic == "hmd/binary_sensor/test/attributes"
 
 
-def test_mqtt_topics_with_device():
+def test_mqtt_topics_with_device(mosquitto):
     mqtt_settings = Settings.MQTT(host="localhost")
     device = DeviceInfo(name="test_device", identifiers="id")
     sensor_info = EntityInfo(name="test", component="binary_sensor", device=device, unique_id="unique_id")
@@ -224,14 +225,16 @@ def message_callback(client: Client, userdata, message: MQTTMessage, tmp=None):
         logging.warn("Skipping retained message")
         return
     payload = message.payload.decode()
+    logging.debug("Got %s", payload)
     assert "test" in payload
     userdata.set()
     client.disconnect()
 
-
 def test_publish_multithread(discoverable: Discoverable):
     received_message = Event()
-    mqtt_client = Client(protocol=MQTTv5, userdata=received_message)
+    mqtt_client = Client(callback_api_version=CallbackAPIVersion.VERSION2,
+                         protocol=MQTTv5,
+                         userdata=received_message)
 
     mqtt_client.connect(host="localhost")
     mqtt_client.on_message = message_callback
@@ -243,22 +246,23 @@ def test_publish_multithread(discoverable: Discoverable):
     )
     mqtt_client.loop_start()
 
-    # Write a state to MQTT from another thread
-    with ThreadPoolExecutor() as executor:
+   # Write a state to MQTT from another thread
+    with ThreadPoolExecutor(max_workers=10) as executor:
         future = executor.submit(discoverable._state_helper, "test")
         # Wait for executor to finish
-        future.result(1)
+        future.result(5)
         # Check that flag is set
         assert discoverable.wrote_configuration is True
         assert discoverable.config_message is not None
 
     # Wait until we receive the published message
-    assert received_message.wait(1)
-
+    assert received_message.wait(5)
 
 def test_publish_async(discoverable: Discoverable):
     received_message = Event()
-    mqtt_client = Client(protocol=MQTTv5, userdata=received_message)
+    mqtt_client = Client(callback_api_version=CallbackAPIVersion.VERSION2,
+                         protocol=MQTTv5,
+                         userdata=received_message)
 
     mqtt_client.connect(host="localhost", clean_start=True)
     mqtt_client.on_message = message_callback
@@ -277,7 +281,7 @@ def test_publish_async(discoverable: Discoverable):
     asyncio.run(publish_state())
 
     # Wait until we receive the published message
-    assert received_message.wait(1)
+    assert received_message.wait(5)
 
 
 def test_disconnect_client(mocker: MockerFixture):
@@ -305,13 +309,17 @@ def test_config_availability_topic(discoverable_availability: Discoverable):
     config = discoverable_availability.generate_config()
     assert config.get("availability_topic") is not None
 
-
-def test_set_availability(discoverable_availability: Discoverable):
-    # Send availability message
-    discoverable_availability.set_availability(True)
-
+def test_set_availability(discoverable_availability: Discoverable, capmqtt):
     # Receive a single message, ignoring retained messages
-    availability_message = subscribe.simple(discoverable_availability.availability_topic, msg_count=1, retained=False)
+    with ThreadPoolExecutor(max_workers=10) as executor:
+        fut1 = executor.submit(subscribe.simple,
+                               discoverable_availability.availability_topic,
+                               msg_count=1,
+                               retained=False)
+        # Wait for subscribe.simple to setup connection and such
+        time.sleep(5)
+        discoverable_availability.set_availability(True)
+        availability_message = fut1.result()
     assert isinstance(availability_message, MQTTMessage)
     assert availability_message.payload.decode("utf-8") == "online"
 

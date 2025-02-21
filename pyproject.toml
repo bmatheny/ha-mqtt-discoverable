@@ -1,15 +1,18 @@
 [project]
 name = "ha-mqtt-discoverable"
-version = "0.16.4"
+version = "0.20.0"
 description = "Python library for creating MQTT entities compatible with Home Assistant"
-authors = [{name = "Joe Block", email = "jpb@unixorn.net"}]
+authors = [
+  {name = "Joe Block", email = "jpb@unixorn.net"},
+  {name = "Blake Matheny", email = "bmatheny@mobocracy.net"},
+]
 readme = "README.md"
 requires-python = ">=3.10.0,<4.0"
 dependencies = [
-    "pyaml==21.10.1",
-    "paho-mqtt==1.6.1",
+    "pyaml ~= 25.1",
+    "paho-mqtt ~= 2.1",
     "gitlike-commands (>=0.2.1,<0.4.0)",
-    "pydantic==2.7.2",
+    "pydantic ~= 2.10",
 ]
 
 
@@ -22,11 +25,11 @@ pytest = ">=7.2.2,<9.0.0"
 flake8 = ">=6,<8"
 pre-commit = "^4.0.1"
 ruff = ">=0.6.8,<0.10.0"
+pytest-mqtt = "^0.5.0"
 
 
 [tool.poetry.group.test.dependencies]
 pytest-mock = "^3.10.0"
-
 
 [tool.ruff]
 # Exclude a variety of commonly ignored directories.
