@@ -111,12 +111,10 @@ class LightInfo(EntityInfo):
     brightness: Optional[bool] = False
     """Flag that defines if the light supports setting the brightness
     """
-    color_mode: Optional[bool] = None
-    """Flag that defines if the light supports color mode"""
     supported_color_modes: Optional[list[str]] = None
     """List of supported color modes. See
     https://www.home-assistant.io/integrations/light.mqtt/#supported_color_modes for current list of
-    supported modes. Required if color_mode is set"""
+    supported modes."""
     effect: Optional[bool] = False
     """Flag that defines if the light supports effects"""
     effect_list: Optional[str | list] = None
@@ -407,8 +405,6 @@ class Light(Subscriber[LightInfo]):
             color_mode(str): A valid color mode
             color(Dict[str, Any]): Color to set, according to color_mode format
         """
-        if not self._entity.color_mode:
-            raise RuntimeError(f"Light {self._entity.name} does not support setting color")
         if color_mode not in self._entity.supported_color_modes:
             raise RuntimeError(f"Color is not in configured supported_color_modes {str(self._entity.supported_color_modes)}")
         # We do not check if color schema conforms to color mode formatting, it is up to the caller
@@ -446,7 +442,6 @@ class Light(Subscriber[LightInfo]):
         logger.info(f"Setting {self._entity.name} to {state} using {self.state_topic}")
         json_state = json.dumps(state)
         self._state_helper(state=json_state, topic=self.state_topic, retain=self._entity.retain)
-
 
 class Cover(Subscriber[CoverInfo]):
     """Implements an MQTT cover:
